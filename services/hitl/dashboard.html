@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>HITL Review Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; }
+.header { background: #1a1a2e; padding: 16px 24px; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; font-weight: 600; color: #7c8cf8; }
+.badge { background: #2d2d44; color: #7c8cf8; padding: 4px 10px; border-radius: 12px; font-size: 12px; }
+.container { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+.empty { text-align: center; padding: 60px; color: #555; font-size: 15px; }
+.card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 18px; margin-bottom: 14px; }
+.card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.author { font-weight: 600; font-size: 14px; color: #7c8cf8; }
+.meta { font-size: 11px; color: #555; margin-top: 3px; }
+.original { font-size: 13px; color: #999; padding: 10px; background: #111; border-radius: 6px; margin-bottom: 10px; }
+.original span { color: #555; font-size: 11px; display: block; margin-bottom: 4px; }
+.draft-label { font-size: 11px; color: #555; margin-bottom: 6px; }
+textarea { width: 100%; background: #111; border: 1px solid #333; color: #e0e0e0; border-radius: 6px; padding: 10px; font-size: 13px; resize: vertical; min-height: 80px; font-family: inherit; }
+textarea:focus { outline: none; border-color: #7c8cf8; }
+.char-count { font-size: 11px; color: #555; text-align: right; margin-top: 4px; }
+.char-count.over { color: #ff6b6b; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+.btn { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity .15s; }
+.btn:hover { opacity: 0.85; }
+.btn-approve { background: #1a6b3a; color: #6bff9e; }
+.btn-reject { background: #3d1515; color: #ff6b6b; }
+.toast { position: fixed; bottom: 20px; right: 20px; background: #1a3d1a; color: #6bff6b; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>HITL Review Dashboard</h1>
+  <span class="badge" id="count">Loading...</span>
+</div>
+<div class="container"><div id="queue"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const ws = new WebSocket("ws://" + location.host + "/ws");
+ws.onmessage = () => loadQueue();
+
+async function loadQueue() {
+  const res = await fetch("/api/queue");
+  const data = await res.json();
+  document.getElementById("count").textContent = data.count + " pending";
+  const container = document.getElementById("queue");
+  if (data.count === 0) {
+    container.innerHTML = "<div class=\"empty\">No items pending review</div>";
+    return;
+  }
+  container.innerHTML = data.items.map(item => {
+    const draft = item.draft_content || "";
+    const clean = draft.replace(/^\[.*?\] /, "");
+    return "<div class=\"card\" id=\"card-" + item.id + "\">" +
+      "<div class=\"card-header\"><div>" +
+      "<div class=\"author\">Type: " + (item.action_type || "reply") + "</div>" +
+      "<div class=\"meta\">ID: " + (item.id || "").slice(0,8) + "...</div>" +
+      "</div></div>" +
+      "<div class=\"original\"><span>Draft</span>" + draft.slice(0,300) + "</div>" +
+      "<div class=\"draft-label\">Edit reply (max 280 chars)</div>" +
+      "<textarea id=\"edit-" + item.id + "\" oninput=\"countChars('" + item.id + "')\">" + clean + "</textarea>" +
+      "<div class=\"char-count\" id=\"count-" + item.id + "\">0 / 280</div>" +
+      "<div class=\"actions\">" +
+      "<button class=\"btn btn-approve\" onclick=\"approve('" + item.id + "')\">Approve</button>" +
+      "<button class=\"btn btn-reject\" onclick=\"reject('" + item.id + "')\">Reject</button>" +
+      "</div></div>";
+  }).join("");
+  data.items.forEach(item => countChars(item.id));
+}
+
+function countChars(id) {
+  const ta = document.getElementById("edit-" + id);
+  const cc = document.getElementById("count-" + id);
+  if (!ta || !cc) return;
+  const len = ta.value.length;
+  cc.textContent = len + " / 280";
+  cc.classList.toggle("over", len > 280);
+}
+
+async function approve(id) {
+  const final = document.getElementById("edit-" + id).value;
+  await fetch("/api/approve/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({final_content: final})});
+  showToast("Approved!");
+  loadQueue();
+}
+
+async function reject(id) {
+  await fetch("/api/reject/" + id, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({reason:"Rejected"})});
+  showToast("Rejected");
+  loadQueue();
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+
+loadQueue();
+setInterval(loadQueue, 10000);
+</script>
+</body>
+</html>
