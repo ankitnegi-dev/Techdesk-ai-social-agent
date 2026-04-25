@@ -1,0 +1,676 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);background:transparent}
+.tabs{display:flex;gap:6px;padding:0 0 1rem;flex-wrap:wrap}
+.tab{padding:6px 14px;font-size:12px;font-weight:500;border:0.5px solid var(--color-border-secondary);border-radius:99px;cursor:pointer;background:var(--color-background-primary);color:var(--color-text-secondary);transition:all .15s}
+.tab.active{background:var(--color-text-primary);color:var(--color-background-primary);border-color:var(--color-text-primary)}
+.scene{display:none;width:100%;min-height:340px;position:relative}
+.scene.active{display:block}
+canvas{display:block;width:100%;height:340px;border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary)}
+.ctrl-row{display:flex;gap:8px;margin-top:10px;align-items:center}
+.ctrl-row button{padding:6px 16px;font-size:12px;cursor:pointer;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary)}
+.ctrl-row button:hover{background:var(--color-background-secondary)}
+.ctrl-row .lbl{font-size:11px;color:var(--color-text-tertiary);margin-left:auto}
+</style>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab(0)">1 · Live Signal Flow</div>
+  <div class="tab" onclick="switchTab(1)">2 · Multi-Agent Decision</div>
+  <div class="tab" onclick="switchTab(2)">3 · HITL Interaction</div>
+  <div class="tab" onclick="switchTab(3)">4 · RAG + LLM Flow</div>
+</div>
+
+<div class="scene active"><canvas id="c0"></canvas>
+<div class="ctrl-row"><button onclick="restartAnim(0)">Replay ↺</button><span class="lbl">Reddit/LinkedIn → Kafka → LangGraph → Agent → RAG → LLM → HITL</span></div></div>
+
+<div class="scene"><canvas id="c1"></canvas>
+<div class="ctrl-row"><button onclick="restartAnim(1)">Replay ↺</button><span class="lbl">Signal enters → Orchestrator routes → Specialist agent → Safety → HITL</span></div></div>
+
+<div class="scene"><canvas id="c2"></canvas>
+<div class="ctrl-row"><button onclick="restartAnim(2)">Replay ↺</button><span class="lbl">3 pending items — approve · edit · reject</span></div></div>
+
+<div class="scene"><canvas id="c3"></canvas>
+<div class="ctrl-row"><button onclick="restartAnim(3)">Replay ↺</button><span class="lbl">Query → vector search → context retrieval → LLM → grounded response</span></div></div>
+
+<script>
+const isDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+function col(light, dark){ return isDark() ? dark : light; }
+
+const BG    = () => col('#ffffff','#1a1a1a');
+const FG    = () => col('#111111','#eeeeee');
+const MUT   = () => col('#888888','#666666');
+const BDR   = () => col('#e0e0e0','#333333');
+const BLUE  = () => col('#185FA5','#5BA5F0');
+const TEAL  = () => col('#0F6E56','#3ecfa0');
+const PURP  = () => col('#534AB7','#a89ef5');
+const AMBE  = () => col('#BA7517','#F0A030');
+const CORAL = () => col('#993C1D','#f07855');
+const GREEN = () => col('#3B6D11','#7cba35');
+const RED   = () => col('#A32D2D','#e86060');
+
+let anims = [null,null,null,null];
+let frames = [null,null,null,null];
+
+function getCanvas(i){ return document.getElementById('c'+i); }
+
+function resize(cv){
+  const r = cv.parentElement.getBoundingClientRect();
+  cv.width  = r.width * devicePixelRatio;
+  cv.height = 340 * devicePixelRatio;
+  cv.style.width  = r.width+'px';
+  cv.style.height = '340px';
+}
+
+//  ANIMATION 0: Signal Flow 
+function initAnim0(){
+  const cv = getCanvas(0); resize(cv);
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const dpr = devicePixelRatio;
+
+  const nodes = [
+    {label:'Reddit',sub:'r/SaaS',x:.05,y:.5,c:()=>CORAL(),source:true},
+    {label:'LinkedIn',sub:'company posts',x:.05,y:.72,c:()=>BLUE(),source:true},
+    {label:'Kafka',sub:'social.signals.raw',x:.22,y:.6,c:()=>AMBE()},
+    {label:'LangGraph',sub:'agent router',x:.4,y:.6,c:()=>PURP()},
+    {label:'Agent',sub:'Engagement',x:.57,y:.6,c:()=>TEAL()},
+    {label:'RAG',sub:'pgvector',x:.71,y:.6,c:()=>GREEN()},
+    {label:'LLM',sub:'Llama 3.3 70B',x:.84,y:.6,c:()=>BLUE()},
+    {label:'HITL',sub:'human review',x:.95,y:.6,c:()=>CORAL()},
+  ];
+
+  let t = 0;
+  let dots = [];
+  let spawnTimer = 0;
+  let labelAlpha = nodes.map((_,i)=> i<2 ? 1 : 0); // Reddit & LinkedIn (0,1) visible from start
+
+  function spawnDot(){
+    const src = Math.random()<.5 ? 0 : 1;
+    dots.push({path:[src,2,3,4,5,6,7], seg:0, prog:0, speed:0.012+Math.random()*0.008, alpha:1, done:false});
+  }
+
+  function nodePos(n){ return {x: n.x*W, y: n.y*H}; }
+
+  function drawRoundRect(ctx,x,y,w,h,r,fill,stroke){
+    ctx.beginPath();
+    ctx.roundRect(x,y,w,h,r);
+    ctx.fillStyle=fill; ctx.fill();
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1*dpr;ctx.stroke();}
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle=BG(); ctx.fillRect(0,0,W,H);
+
+    // title
+    ctx.font=`${500} ${11*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText('LIVE SIGNAL FLOW  —  TechDesk AI',12*dpr,20*dpr);
+
+    // edges
+    ctx.setLineDash([4*dpr,4*dpr]);
+    ctx.lineDashOffset = -t*0.5;
+    ctx.strokeStyle=BDR(); ctx.lineWidth=1.5*dpr;
+    // reddit & linkedin → kafka
+    const kp=nodePos(nodes[2]);
+    [0,1].forEach(i=>{
+      const p=nodePos(nodes[i]);
+      ctx.beginPath(); ctx.moveTo(p.x+28*dpr,p.y); ctx.lineTo(kp.x-28*dpr,kp.y); ctx.stroke();
+    });
+    // kafka → hitl chain
+    for(let i=2;i<nodes.length-1;i++){
+      const a=nodePos(nodes[i]), b=nodePos(nodes[i+1]);
+      // Kafka box is wider, so adjust offset
+      const kafkaOffset = i===2 ? 40*dpr : 30*dpr;
+      ctx.beginPath(); ctx.moveTo(a.x+kafkaOffset,a.y); ctx.lineTo(b.x-30*dpr,b.y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // nodes
+    nodes.forEach((n,i)=>{
+      const {x,y}=nodePos(n);
+      // Source nodes (Reddit/LinkedIn) need larger boxes
+      let w, h;
+      if(n.source){
+        w = 70*dpr;
+        h = 55*dpr;
+      } else if(i===2){
+        w = 80*dpr;
+        h = 40*dpr;
+      } else {
+        w = 56*dpr;
+        h = 36*dpr;
+      }
+      const alpha = Math.min(1, labelAlpha[i]);
+      ctx.globalAlpha = 0.15 + alpha*0.85;
+      drawRoundRect(ctx,x-w/2,y-h/2,w,h,6*dpr, n.c()+'22', n.c());
+      ctx.globalAlpha=alpha;
+      ctx.font=`500 ${9*dpr}px sans-serif`;
+      ctx.fillStyle=n.c();
+      ctx.textAlign='center';
+      ctx.fillText(n.label,x,y-8*dpr);
+      // Kafka uses smaller font for subtitle
+      ctx.font = i===2 ? `${7*dpr}px sans-serif` : `${8*dpr}px sans-serif`;
+      ctx.fillStyle=n.source ? n.c() : MUT();
+      ctx.fillText(n.sub,x,y+5*dpr);
+      // add source indicator for Reddit & LinkedIn
+      if(n.source){
+        ctx.font=`${7*dpr}px sans-serif`;
+        ctx.fillStyle=n.c()+'99';
+        ctx.fillText('source',x,y+18*dpr);
+      }
+      ctx.globalAlpha=1;
+      ctx.textAlign='left';
+    });
+
+    // dots
+    dots.forEach(d=>{
+      if(d.done) return;
+      const a=nodePos(nodes[d.path[d.seg]]);
+      const b=nodePos(nodes[d.path[d.seg+1]]);
+      const px=a.x+(b.x-a.x)*d.prog;
+      const py=a.y+(b.y-a.y)*d.prog;
+      ctx.beginPath();
+      ctx.arc(px,py,5*dpr,0,Math.PI*2);
+      ctx.fillStyle=AMBE();
+      ctx.globalAlpha=d.alpha;
+      ctx.fill();
+      ctx.globalAlpha=1;
+
+      // pulse ring
+      ctx.beginPath();
+      ctx.arc(px,py,(5+Math.sin(t*0.3)*2)*dpr,0,Math.PI*2);
+      ctx.strokeStyle=AMBE()+'66';
+      ctx.lineWidth=1.5*dpr;
+      ctx.stroke();
+
+      // topic label when at kafka
+      if(d.seg===1 && d.prog>0.8){
+        ctx.font=`${8*dpr}px monospace`;
+        ctx.fillStyle=AMBE();
+        ctx.fillText('social.signals.raw',px+8*dpr,py-8*dpr);
+      }
+      if(d.seg===6 && d.prog>0.5){
+        ctx.font=`${8*dpr}px monospace`;
+        ctx.fillStyle=TEAL();
+        ctx.fillText('agent.actions.draft',px+8*dpr,py-8*dpr);
+      }
+    });
+
+    t++;
+    // update dots
+    dots.forEach(d=>{
+      if(d.done) return;
+      d.prog+=d.speed;
+      if(d.prog>=1){
+        d.prog=0;
+        labelAlpha[d.path[d.seg+1]]=1;
+        d.seg++;
+        if(d.seg>=d.path.length-1){ d.done=true; }
+      }
+    });
+    // fade labels over time
+    labelAlpha.forEach((_,i)=>{ if(labelAlpha[i]>0) labelAlpha[i]=Math.min(1,labelAlpha[i]+0.04); });
+
+    spawnTimer++;
+    if(spawnTimer>60){ spawnTimer=0; spawnDot(); }
+    if(t===1){ spawnDot(); spawnDot(); }
+
+    frames[0]=requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ─── ANIMATION 1: Multi-Agent Decision ─────────────────────────────
+function initAnim1(){
+  const cv=getCanvas(1); resize(cv);
+  const ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,dpr=devicePixelRatio;
+
+  const CX=W/2, CY=H*0.28;
+  const agents=[
+    {label:'Engagement',sub:'reply + RAG',ox:-0.32,oy:0.55,c:()=>TEAL()},
+    {label:'Crisis',sub:'escalate',ox:0,oy:0.55,c:()=>RED()},
+    {label:'ContentCreator',sub:'proactive post',ox:0.32,oy:0.55,c:()=>PURP()},
+  ];
+  const safetyY = H*0.78;
+
+  let t=0;
+  let phase=0; // 0=signal, 1=orch, 2=branch, 3=safety, 4=hitl
+  let phaseT=0;
+  let activeAgent=0;
+  let phaseTimer=0;
+
+  function drawNode(x,y,w,h,label,sub,c,alpha=1,glow=false){
+    ctx.globalAlpha=alpha;
+    if(glow){
+      ctx.shadowColor=c; ctx.shadowBlur=18*dpr;
+    }
+    drawRoundRect2(ctx,x-w/2,y-h/2,w,h,7*dpr,c+'28',c);
+    ctx.shadowBlur=0;
+    ctx.font=`500 ${9*dpr}px sans-serif`;
+    ctx.fillStyle=c; ctx.textAlign='center';
+    ctx.fillText(label,x,y-3*dpr);
+    ctx.font=`${8*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText(sub,x,y+10*dpr);
+    ctx.textAlign='left';
+    ctx.globalAlpha=1;
+  }
+
+  function drawRoundRect2(ctx,x,y,w,h,r,fill,stroke){
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,r);
+    ctx.fillStyle=fill; ctx.fill();
+    ctx.strokeStyle=stroke; ctx.lineWidth=1.5*dpr; ctx.stroke();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle=BG(); ctx.fillRect(0,0,W,H);
+
+    ctx.font=`500 ${11*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText('MULTI-AGENT DECISION FLOW',12*dpr,20*dpr);
+
+    const sinPulse = Math.abs(Math.sin(t*0.05));
+
+    // Signal node
+    const sigA = phase>=1 ? 1 : 0.4+sinPulse*0.4;
+    drawNode(CX, H*0.1, 80*dpr, 34*dpr, 'Signal', 'r/SaaS', AMBE(), sigA, phase===0);
+
+    // Arrow signal → orchestrator
+    if(phase>=1){
+      const prog = Math.min(1,(phaseT-0)/20);
+      ctx.beginPath();
+      ctx.moveTo(CX, H*0.1+17*dpr);
+      ctx.lineTo(CX, CY-17*dpr);
+      ctx.strokeStyle=AMBE()+(Math.floor(prog*255).toString(16).padStart(2,'0'));
+      ctx.lineWidth=2*dpr; ctx.stroke();
+    }
+
+    // Orchestrator
+    const orchA = phase>=1 ? 1 : 0.2;
+    drawNode(CX, CY, 100*dpr, 34*dpr, 'Orchestrator', 'intent routing', BLUE(), orchA, phase===1);
+
+    // Branch lines and agent nodes
+    agents.forEach((ag,i)=>{
+      const tx=CX+ag.ox*W, ty=H*0.55;
+      const a = phase>=2 ? 1 : 0.2;
+      // line from orch to agent
+      if(phase>=2){
+        const prog=Math.min(1,(phaseT - (i*6))/20);
+        if(prog>0){
+          // Calculate direction and distance
+          const dx = tx - CX;
+          const dy = ty - (CY + 17*dpr);
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          const dirX = dx / dist;
+          const dirY = dy / dist;
+          
+          // Start from orchestrator edge (50 = 100/2)
+          const startX = CX + dirX * 50*dpr;
+          const startY = CY + 17*dpr + dirY * 0*dpr;
+          
+          // End at agent box edge (45 = 90/2 for width)
+          const endX = tx - dirX * 45*dpr;
+          const endY = ty - dirY * 18*dpr;
+          
+          ctx.beginPath();
+          ctx.moveTo(startX, startY);
+          ctx.lineTo(startX + (endX - startX) * prog, startY + (endY - startY) * prog);
+          ctx.strokeStyle=ag.c()+(Math.floor(prog*200).toString(16).padStart(2,'0'));
+          ctx.lineWidth=2*dpr; ctx.stroke();
+        }
+      }
+      const isActive = phase>=2 && i===activeAgent;
+      drawNode(tx, ty, 90*dpr, 36*dpr, ag.label, ag.sub, ag.c(), a, isActive);
+    });
+
+    // Safety
+    if(phase>=3){
+      const ty=safetyY;
+      const prog=Math.min(1,(phaseT)/15);
+      // line from active agent to safety
+      const ax=CX+agents[activeAgent].ox*W, ay=H*0.55;
+      
+      // Calculate direction and distance
+      const dx = CX - ax;
+      const dy = ty - (ay + 18*dpr);
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const dirX = dx / dist;
+      const dirY = dy / dist;
+      
+      // Start from agent box edge (45 = 90/2)
+      const startX = ax + dirX * 45*dpr;
+      const startY = ay + 18*dpr;
+      
+      // End at safety box top edge (45 = 90/2, 17 = 34/2)
+      const endX = CX;
+      const endY = ty - 17*dpr;
+      
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(startX + (endX - startX) * prog, startY + (endY - startY) * prog);
+      ctx.strokeStyle=GREEN()+'cc'; ctx.lineWidth=2*dpr; ctx.stroke();
+      drawNode(CX,ty,90*dpr,34*dpr,'Safety Gate','toxicity + filter',GREEN(),prog,phase===3);
+    }
+
+    // HITL
+    if(phase>=4){
+      const ty=H*0.93;
+      const prog=Math.min(1,(phaseT)/15);
+      // Vertical line from safety bottom to HITL top
+      const startY = safetyY + 17*dpr; // bottom of safety box (34/2=17)
+      const endY = ty - 17*dpr; // top of HITL box (34/2=17)
+      
+      ctx.beginPath();
+      ctx.moveTo(CX, startY);
+      ctx.lineTo(CX, startY + (endY - startY) * prog);
+      ctx.strokeStyle=CORAL()+'cc'; ctx.lineWidth=2*dpr; ctx.stroke();
+      drawNode(CX,ty,90*dpr,34*dpr,'HITL Queue','human approval',CORAL(),prog,true);
+    }
+
+    // phase transitions
+    phaseTimer++;
+    phaseT++;
+    if(phase===0 && phaseTimer>50){ phase=1; phaseTimer=0; phaseT=0; }
+    else if(phase===1 && phaseTimer>40){ phase=2; phaseTimer=0; phaseT=0; activeAgent=Math.floor(Math.random()*3); }
+    else if(phase===2 && phaseTimer>70){ phase=3; phaseTimer=0; phaseT=0; }
+    else if(phase===3 && phaseTimer>50){ phase=4; phaseTimer=0; phaseT=0; }
+    else if(phase===4 && phaseTimer>60){ phase=0; phaseTimer=0; phaseT=0; }
+
+    t++;
+    frames[1]=requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ─── ANIMATION 2: HITL Dashboard ───────────────────────────────────
+function initAnim2(){
+  const cv=getCanvas(2); resize(cv);
+  const ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,dpr=devicePixelRatio;
+
+  const items=[
+    {type:'reply',user:'@dev_rajesh',text:'Slack integration disconnecting…',action:null,color:()=>BLUE()},
+    {type:'escalate',user:'@angry_customer',text:'Support inbox down for 2 hours!',action:null,color:()=>RED()},
+    {type:'post',user:'@viral_signal',text:'AI help desk handles 80% of tickets',action:null,color:()=>PURP()},
+  ];
+
+  let t=0;
+  let step=0; // 0=idle, 1=hover0, 2=approve0, 3=hover1, 4=edit1, 5=hover2, 6=reject2, 7=done
+  let stepT=0;
+  let stepTimer=0;
+  let cursorX=W*0.5, cursorY=H*0.2;
+  let targetCX=W*0.5, targetCY=H*0.2;
+  let toastMsg='', toastAlpha=0, toastColor=()=>GREEN();
+
+  function lerpC(a,b,t){ return a+(b-a)*t; }
+
+  function drawCard(idx, x, y, w, h, item, hovered, alpha=1){
+    ctx.globalAlpha=alpha;
+    const c=item.color();
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,8*dpr);
+    ctx.fillStyle=hovered ? c+'18' : BDR()+'44';
+    ctx.fill();
+    ctx.strokeStyle=hovered ? c : BDR();
+    ctx.lineWidth=(hovered?2:1)*dpr; ctx.stroke();
+
+    // badge
+    ctx.beginPath(); ctx.roundRect(x+10*dpr,y+9*dpr,45*dpr,14*dpr,99*dpr);
+    ctx.fillStyle=c+'33'; ctx.fill();
+    ctx.font=`500 ${7.5*dpr}px sans-serif`;
+    ctx.fillStyle=c; ctx.textAlign='left';
+    ctx.fillText(item.type.toUpperCase(),x+14*dpr,y+19*dpr);
+
+    ctx.font=`500 ${8.5*dpr}px sans-serif`;
+    ctx.fillStyle=FG();
+    ctx.fillText(item.user,x+62*dpr,y+19*dpr);
+
+    ctx.font=`${8*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText(item.text,x+10*dpr,y+36*dpr);
+
+    // buttons
+    const btns=[
+      {label:'Approve',bc:()=>GREEN(),bx:x+w-160*dpr},
+      {label:'Edit',bc:()=>AMBE(),bx:x+w-100*dpr},
+      {label:'Reject',bc:()=>RED(),bx:x+w-44*dpr},
+    ];
+    btns.forEach(b=>{
+      const bw=48*dpr, bh=18*dpr, by=y+h-26*dpr;
+      ctx.beginPath(); ctx.roundRect(b.bx,by,bw,bh,4*dpr);
+      ctx.fillStyle=b.bc()+'33'; ctx.fill();
+      ctx.strokeStyle=b.bc(); ctx.lineWidth=0.75*dpr; ctx.stroke();
+      ctx.font=`${7.5*dpr}px sans-serif`;
+      ctx.fillStyle=b.bc(); ctx.textAlign='center';
+      ctx.fillText(b.label,b.bx+bw/2,by+12*dpr);
+    });
+
+    ctx.textAlign='left';
+    ctx.globalAlpha=1;
+  }
+
+  // action states
+  let actionAlpha=[0,0,0];
+  let actionLabel=['Approved','Editing…','Rejected'];
+  let actionColor=[()=>GREEN(),()=>AMBE(),()=>RED()];
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle=BG(); ctx.fillRect(0,0,W,H);
+
+    ctx.font=`500 ${11*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText('HITL REVIEW DASHBOARD  —  3 pending',12*dpr,22*dpr);
+
+    // counter
+    const remaining = 3 - [0,1,2].filter(i=>actionAlpha[i]>0.9).length;
+    ctx.font=`500 ${10*dpr}px sans-serif`;
+    ctx.fillStyle=CORAL();
+    ctx.textAlign='right';
+    ctx.fillText(remaining+' pending',W-12*dpr,22*dpr);
+    ctx.textAlign='left';
+
+    const cardH=70*dpr, cardW=W-24*dpr, gap=10*dpr, x0=12*dpr, y0=35*dpr;
+
+    items.forEach((item,i)=>{
+      const y=y0+i*(cardH+gap);
+      const hovered = (step===1&&i===0)||(step===3&&i===1)||(step===5&&i===2);
+      const dismissed = actionAlpha[i]>0.9;
+
+      if(dismissed){
+        // show action result
+        ctx.globalAlpha=actionAlpha[i];
+        ctx.font=`500 ${10*dpr}px sans-serif`;
+        ctx.fillStyle=actionColor[i]();
+        ctx.textAlign='center';
+        ctx.fillText(actionLabel[i]+' — '+item.user,W/2,y+cardH/2+4*dpr);
+        ctx.globalAlpha=1;
+        ctx.textAlign='left';
+      } else {
+        drawCard(i,x0,y,cardW,cardH,item,hovered,1);
+      }
+      if(actionAlpha[i]>0&&actionAlpha[i]<0.9) actionAlpha[i]=Math.min(1,actionAlpha[i]+0.04);
+    });
+
+    // cursor dot
+    cursorX=lerpC(cursorX,targetCX,0.08);
+    cursorY=lerpC(cursorY,targetCY,0.08);
+    ctx.beginPath(); ctx.arc(cursorX,cursorY,5*dpr,0,Math.PI*2);
+    ctx.fillStyle=FG(); ctx.fill();
+    ctx.beginPath(); ctx.arc(cursorX,cursorY,9*dpr,0,Math.PI*2);
+    ctx.strokeStyle=FG()+'55'; ctx.lineWidth=1.5*dpr; ctx.stroke();
+
+    // toast
+    if(toastAlpha>0){
+      ctx.globalAlpha=Math.min(toastAlpha,1);
+      ctx.beginPath(); ctx.roundRect(W/2-60*dpr,H-36*dpr,120*dpr,22*dpr,99*dpr);
+      ctx.fillStyle=toastColor(); ctx.fill();
+      ctx.font=`500 ${9*dpr}px sans-serif`;
+      ctx.fillStyle='#fff'; ctx.textAlign='center';
+      ctx.fillText(toastMsg,W/2,H-22*dpr);
+      ctx.textAlign='left';
+      ctx.globalAlpha=1;
+      toastAlpha-=0.015;
+    }
+
+    // step machine
+    stepTimer++;
+    const cardH_raw=70*dpr, gap_raw=10*dpr, y0_raw=35*dpr;
+
+    if(step===0&&stepTimer>40){ step=1; stepTimer=0; targetCX=W-100*dpr; targetCY=y0_raw+35*dpr; }
+    else if(step===1&&stepTimer>35){ step=2; stepTimer=0; actionAlpha[0]=0.01; toastMsg='Approved ✓'; toastColor=()=>GREEN(); toastAlpha=2.5; }
+    else if(step===2&&stepTimer>40){ step=3; stepTimer=0; targetCX=W-150*dpr; targetCY=y0_raw+cardH_raw+gap_raw+35*dpr; }
+    else if(step===3&&stepTimer>35){ step=4; stepTimer=0; actionAlpha[1]=0.01; toastMsg='Editing…'; toastColor=()=>AMBE(); toastAlpha=2.5; }
+    else if(step===4&&stepTimer>40){ step=5; stepTimer=0; targetCX=W-48*dpr; targetCY=y0_raw+2*(cardH_raw+gap_raw)+35*dpr; }
+    else if(step===5&&stepTimer>35){ step=6; stepTimer=0; actionAlpha[2]=0.01; toastMsg='Rejected ✗'; toastColor=()=>RED(); toastAlpha=2.5; }
+    else if(step===6&&stepTimer>60){ step=0; stepTimer=0; actionAlpha=[0,0,0]; targetCX=W/2; targetCY=H*0.2; }
+
+    t++;
+    frames[2]=requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ─── ANIMATION 3: RAG + LLM Flow ───────────────────────────────────
+function initAnim3(){
+  const cv=getCanvas(3); resize(cv);
+  const ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,dpr=devicePixelRatio;
+
+  const steps=[
+    {label:'Query',sub:'user signal',x:.08,c:()=>AMBE()},
+    {label:'Embed',sub:'fastembed\nbge-small',x:.23,c:()=>BLUE()},
+    {label:'pgvector',sub:'cosine search',x:.4,c:()=>PURP()},
+    {label:'Context',sub:'top-3 chunks',x:.57,c:()=>TEAL()},
+    {label:'LLM',sub:'Llama 3.3 70B',x:.73,c:()=>BLUE()},
+    {label:'Response',sub:'grounded\non-brand',x:.9,c:()=>GREEN()},
+  ];
+
+  let t=0;
+  let stepActive=0;
+  let stepAlpha=steps.map((_,i)=>i===0?1:0);
+  let particleT=0;
+  let particles=[];
+  let groundLabel=0;
+
+  function spawnParticle(fromIdx){
+    if(fromIdx>=steps.length-1) return;
+    const a=steps[fromIdx], b=steps[fromIdx+1];
+    particles.push({from:fromIdx,prog:0,speed:0.02+Math.random()*0.01});
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle=BG(); ctx.fillRect(0,0,W,H);
+
+    ctx.font=`500 ${11*dpr}px sans-serif`;
+    ctx.fillStyle=MUT();
+    ctx.fillText('RAG + LLM FLOW  —  grounding prevents hallucination',12*dpr,22*dpr);
+
+    const cy=H*0.48;
+
+    // draw connectors
+    ctx.setLineDash([3*dpr,4*dpr]);
+    ctx.lineDashOffset=-t*0.4;
+    for(let i=0;i<steps.length-1;i++){
+      const a=steps[i], b=steps[i+1];
+      ctx.beginPath();
+      ctx.moveTo(a.x*W+28*dpr,cy);
+      ctx.lineTo(b.x*W-28*dpr,cy);
+      ctx.strokeStyle=stepActive>=i ? a.c()+'88' : BDR();
+      ctx.lineWidth=1.5*dpr; ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // draw nodes
+    steps.forEach((s,i)=>{
+      const x=s.x*W;
+      const alpha=Math.min(1,stepAlpha[i]);
+      ctx.globalAlpha=alpha;
+      if(stepActive===i){
+        ctx.shadowColor=s.c(); ctx.shadowBlur=16*dpr;
+      }
+      ctx.beginPath(); ctx.roundRect(x-28*dpr,cy-20*dpr,56*dpr,40*dpr,7*dpr);
+      ctx.fillStyle=s.c()+'22'; ctx.fill();
+      ctx.strokeStyle=s.c(); ctx.lineWidth=1.5*dpr; ctx.stroke();
+      ctx.shadowBlur=0;
+      ctx.font=`500 ${9*dpr}px sans-serif`;
+      ctx.fillStyle=s.c(); ctx.textAlign='center';
+      ctx.fillText(s.label,x,cy-4*dpr);
+      const subs=s.sub.split('\n');
+      ctx.font=`${7.5*dpr}px sans-serif`;
+      ctx.fillStyle=MUT();
+      subs.forEach((line,li)=> ctx.fillText(line,x,cy+8*dpr+li*9*dpr));
+      ctx.textAlign='left';
+      ctx.globalAlpha=1;
+    });
+
+    // particles
+    particles.forEach((p,pi)=>{
+      const a=steps[p.from], b=steps[p.from+1];
+      const px=a.x*W+28*dpr + (b.x*W-28*dpr - (a.x*W+28*dpr))*p.prog;
+      ctx.beginPath(); ctx.arc(px,cy,4*dpr,0,Math.PI*2);
+      ctx.fillStyle=a.c();
+      ctx.globalAlpha=1-p.prog*0.3;
+      ctx.fill();
+      ctx.globalAlpha=1;
+      p.prog+=p.speed;
+      if(p.prog>=1){ particles.splice(pi,1); stepAlpha[p.from+1]+=0.15; }
+    });
+
+    // grounding label
+    if(stepActive>=3){
+      groundLabel=Math.min(1,groundLabel+0.03);
+      const gx=steps[3].x*W, gy=cy-50*dpr;
+      ctx.globalAlpha=groundLabel;
+      ctx.beginPath(); ctx.roundRect(gx-75*dpr,gy-12*dpr,150*dpr,24*dpr,99*dpr);
+      ctx.fillStyle=GREEN()+'33'; ctx.fill();
+      ctx.strokeStyle=GREEN(); ctx.lineWidth=0.75*dpr; ctx.stroke();
+      ctx.font=`500 ${8*dpr}px sans-serif`;
+      ctx.fillStyle=GREEN(); ctx.textAlign='center';
+      ctx.fillText('GROUNDED — not hallucinating',gx,gy+2*dpr);
+      ctx.textAlign='left';
+      ctx.globalAlpha=1;
+    }
+
+    // step advance
+    particleT++;
+    if(particleT%45===0 && stepActive<steps.length-1){
+      spawnParticle(stepActive);
+      stepActive++;
+    }
+    if(stepActive>=steps.length-1 && particles.length===0){
+      // reset
+      setTimeout(()=>{ stepActive=0; stepAlpha=steps.map((_,i)=>i===0?1:0); groundLabel=0; particles=[]; },1500);
+    }
+
+    t++;
+    frames[3]=requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ─── TAB + CONTROL ─────────────────────────────────────────────────
+const inits=[initAnim0,initAnim1,initAnim2,initAnim3];
+let currentTab=0;
+
+function switchTab(i){
+  document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));
+  document.querySelectorAll('.scene').forEach((s,j)=>s.classList.toggle('active',j===i));
+  if(frames[i]===null) inits[i]();
+  currentTab=i;
+}
+
+function restartAnim(i){
+  if(frames[i]) cancelAnimationFrame(frames[i]);
+  frames[i]=null;
+  inits[i]();
+}
+
+// init first tab
+initAnim0();
+</script>
