@@ -1,4 +1,4 @@
-# TechDesk AI — Autonomous Multi-Agent Social Intelligence System
+# TechDesk AI - Autonomous Multi-Agent Social Intelligence System
 
 > **TL;DR**: An AI-native, event-driven system that monitors social platforms in real time, generates grounded responses using RAG, enforces safety via human-in-the-loop, and improves continuously using feedback loops (RLHF + bandits).
 
@@ -39,7 +39,7 @@ This system is designed to:
 
 ---
 
-## 🏗️ Architecture — 7 Layers
+## 🏗️ Architecture - 7 Layers
 
 ```text
 ┌─────────────────────────────────────────────┐
